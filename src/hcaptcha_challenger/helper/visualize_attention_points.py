@@ -1,18 +1,25 @@
 from pathlib import Path
-from typing import Union, Optional, Dict, Any
+from typing import Any
+
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import Circle, FancyArrow
-from ..models import ImageAreaSelectChallenge, ImageDragDropChallenge, PointCoordinate, SpatialPath
-from .create_coordinate_grid import FloatRect
+
+from ..models import (
+    ImageAreaSelectChallenge,
+    ImageDragDropChallenge,
+    PointCoordinate,
+    SpatialPath,
+)
+from .create_coordinate_grid import FloatRect, canvas_to_rgb
 
 
 def show_answer_points(
-    image: Union[str, np.ndarray, Path],
-    answer: Union[ImageAreaSelectChallenge, ImageDragDropChallenge, Dict[str, Any]],
-    bbox: Optional[FloatRect] = None,
-    save_path: Optional[Union[str, Path]] = None,
+    image: str | np.ndarray | Path,
+    answer: ImageAreaSelectChallenge | ImageDragDropChallenge | dict[str, Any],
+    bbox: FloatRect | None = None,
+    save_path: str | Path | None = None,
     show_plot: bool = True,
     **kwargs,
 ) -> np.ndarray:
@@ -100,12 +107,9 @@ def show_answer_points(
     if show_plot:
         plt.show()
 
-    # Convert to numpy array
+    # Convert to a logical-pixel numpy array
     fig.canvas.draw()
-    buf = fig.canvas.buffer_rgba()  # type: ignore[arg-type]
-    result_img = np.frombuffer(buf, dtype=np.uint8)
-    result_img = result_img.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-    result_img = cv2.cvtColor(result_img, cv2.COLOR_RGBA2RGB)
+    result_img = canvas_to_rgb(fig.canvas)
 
     plt.close(fig)
 
@@ -113,8 +117,8 @@ def show_answer_points(
 
 
 def _parse_answer_dict(
-    answer_dict: Dict[str, Any],
-) -> Union[ImageAreaSelectChallenge, ImageDragDropChallenge]:
+    answer_dict: dict[str, Any],
+) -> ImageAreaSelectChallenge | ImageDragDropChallenge:
     """Parse dictionary answer into proper model object."""
     challenge_prompt = answer_dict.get('challenge_prompt', '')
 
@@ -164,7 +168,7 @@ def _visualize_area_select(
             fontsize=8,
             ha='center',
             va='top',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+            bbox={'boxstyle': 'round,pad=0.3', 'facecolor': 'white', 'alpha': 0.7},
         )
 
 
@@ -236,17 +240,17 @@ def _visualize_drag_drop(
             color=color,
             fontsize=9,
             ha='center',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.5),
+            bbox={'boxstyle': 'round,pad=0.3', 'facecolor': 'yellow', 'alpha': 0.5},
             zorder=1000,
         )
 
 
 def create_comparison_view(
-    original_image: Union[str, np.ndarray, Path],
-    coordinate_image: Union[str, np.ndarray, Path],
-    answer: Union[ImageAreaSelectChallenge, ImageDragDropChallenge, Dict[str, Any]],
-    bbox: Optional[FloatRect] = None,
-    save_path: Optional[Union[str, Path]] = None,
+    original_image: str | np.ndarray | Path,
+    coordinate_image: str | np.ndarray | Path,
+    answer: ImageAreaSelectChallenge | ImageDragDropChallenge | dict[str, Any],
+    bbox: FloatRect | None = None,
+    save_path: str | Path | None = None,
     **kwargs,
 ) -> np.ndarray:
     """
@@ -327,12 +331,9 @@ def create_comparison_view(
     # Show plot
     plt.show()
 
-    # Convert to numpy array
+    # Convert to a logical-pixel numpy array
     fig.canvas.draw()
-    buf = fig.canvas.buffer_rgba()  # type: ignore[arg-type]
-    result_img = np.frombuffer(buf, dtype=np.uint8)
-    result_img = result_img.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-    result_img = cv2.cvtColor(result_img, cv2.COLOR_RGBA2RGB)
+    result_img = canvas_to_rgb(fig.canvas)
 
     plt.close(fig)
 

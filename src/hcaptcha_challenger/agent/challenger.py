@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 # Time       : 2024/4/7 11:43
 # Author     : QIN2DIM
 # GitHub     : https://github.com/QIN2DIM
 # Description:
+# ruff: noqa: BLE001, DTZ005
 import asyncio
 import json
 import math
@@ -14,44 +14,58 @@ from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from typing import List, Tuple
 from uuid import uuid4
 
 import matplotlib.pyplot as plt
 import msgpack
 from loguru import logger
-from playwright.async_api import Locator, expect, Page, Response, TimeoutError, FrameLocator, Frame
-from pydantic import Field, field_validator, SecretStr
+from playwright.async_api import (
+    Frame,
+    FrameLocator,
+    Locator,
+    Page,
+    Response,
+    TimeoutError,
+    expect,
+)
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from hcaptcha_challenger.agent.exceptions import ChallengeViewportUnavailable
+from hcaptcha_challenger.agent.validation import (
+    BoundsValidationError,
+    CoordinateBoundsValidator,
+    ViewportBounds,
+)
 from hcaptcha_challenger.helper import create_coordinate_grid
 from hcaptcha_challenger.models import (
-    CaptchaResponse,
-    RequestType,
-    ChallengeSignal,
-    SCoTModelType,
-    DEFAULT_SCOT_MODEL,
     DEFAULT_FAST_SHOT_MODEL,
-    FastShotModelType,
-    SpatialPath,
-    CaptchaPayload,
+    DEFAULT_SCOT_MODEL,
     IGNORE_REQUEST_TYPE_LITERAL,
     INV,
+    CaptchaPayload,
+    CaptchaResponse,
+    ChallengeSignal,
+    ChallengeTypeEnum,
+    CoordinateGrid,
+    FastShotModelType,
+    RequestType,
+    SCoTModelType,
+    SpatialPath,
 )
-from hcaptcha_challenger.models import ChallengeTypeEnum, CoordinateGrid
 from hcaptcha_challenger.skills import SkillManager
 from hcaptcha_challenger.tools import (
-    ImageClassifier,
     ChallengeRouter,
+    ImageClassifier,
     SpatialPathReasoner,
     SpatialPointReasoner,
 )
 
 
 def _generate_bezier_trajectory(
-    start: Tuple[float, float], end: Tuple[float, float], steps: int
-) -> List[Tuple[float, float]]:
+    start: tuple[float, float], end: tuple[float, float], steps: int
+) -> list[tuple[float, float]]:
     """
     Generates a quadratic bezier curve trajectory between start and end points.
     """
@@ -83,7 +97,7 @@ def _generate_bezier_trajectory(
     return points
 
 
-def _generate_dynamic_delays(steps: int, base_delay: int) -> List[float]:
+def _generate_dynamic_delays(steps: int, base_delay: int) -> list[float]:
     """
     Generates dynamic delays between mouse movements to simulate human-like acceleration/deceleration.
     """
@@ -112,7 +126,7 @@ def _generate_dynamic_delays(steps: int, base_delay: int) -> List[float]:
 
 
 SINGLE_IGNORE_TYPE = IGNORE_REQUEST_TYPE_LITERAL | RequestType | ChallengeTypeEnum
-IGNORE_REQUEST_TYPE_LIST = List[SINGLE_IGNORE_TYPE]
+IGNORE_REQUEST_TYPE_LIST = list[SINGLE_IGNORE_TYPE]
 
 
 class AgentConfig(BaseSettings):
@@ -127,7 +141,7 @@ class AgentConfig(BaseSettings):
     challenge_dir: Path = Path("tmp/.challenge")
     captcha_response_dir: Path = Path("tmp/.captcha")
     ignore_request_types: IGNORE_REQUEST_TYPE_LIST | None = Field(default_factory=list)
-    ignore_request_questions: List[str] | None = Field(default_factory=list)
+    ignore_request_questions: list[str] | None = Field(default_factory=list)
 
     DISABLE_BEZIER_TRAJECTORY: bool = Field(
         default=False,
@@ -317,7 +331,7 @@ class RoboticArm:
     def challenge_selector(self) -> str:
         return self._challenge_selector
 
-    async def get_challenge_frame_locator(self) -> Frame | None:
+    async def get_challenge_frame_locator(self) -> Frame:
         candidate_frame = self._find_challenge_frame_recursive(self.page.main_frame, max_depth=4)
 
         if candidate_frame:
@@ -346,8 +360,9 @@ class RoboticArm:
         except Exception as e:
             logger.error(f"Error finding all iframes: {e}")
 
-        logger.error("Cannot find a valid challenge frame")
-        return None
+        message = "Cannot find a valid challenge frame; the viewport may have detached"
+        logger.error(message)
+        raise ChallengeViewportUnavailable(message)
 
     def _find_challenge_frame_recursive(
         self, frame: Frame, current_depth=0, max_depth=4
@@ -486,6 +501,22 @@ class RoboticArm:
 
         return True
 
+    async def _get_live_viewport_bounds(self) -> ViewportBounds:
+        """Read fresh challenge bounds immediately before browser input."""
+        frame_challenge = await self.get_challenge_frame_locator()
+        challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
+        bbox = await challenge_view.bounding_box()
+        if bbox is None:
+            raise ChallengeViewportUnavailable(
+                "The live challenge viewport is unavailable or has detached"
+            )
+        return ViewportBounds(
+            x=float(bbox["x"]),
+            y=float(bbox["y"]),
+            width=float(bbox["width"]),
+            height=float(bbox["height"]),
+        )
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(1),
@@ -504,6 +535,10 @@ class RoboticArm:
 
         challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
         bbox = await challenge_view.bounding_box()
+        if bbox is None:
+            raise ChallengeViewportUnavailable(
+                "The challenge viewport detached while capturing its bounds"
+            )
 
         # Save grid field
         result = create_coordinate_grid(
@@ -640,6 +675,8 @@ class RoboticArm:
                 path=cache_key.joinpath(f"{cache_key.name}_{cid}_model_answer.json")
             )
 
+            bounds = await self._get_live_viewport_bounds()
+            CoordinateBoundsValidator.require_paths(response.paths, bounds)
             for path in response.paths:
                 await self._perform_drag_drop(path)
 
@@ -670,6 +707,8 @@ class RoboticArm:
                 path=cache_key.joinpath(f"{cache_key.name}_{cid}_model_answer.json")
             )
 
+            bounds = await self._get_live_viewport_bounds()
+            CoordinateBoundsValidator.require_points(response.points, bounds)
             for point in response.points:
                 await self.page.mouse.click(point.x, point.y, delay=180)
                 await self.page.wait_for_timeout(500)
@@ -691,7 +730,7 @@ class AgentV:
         self._captcha_payload: CaptchaPayload | None = None
         self._captcha_payload_queue: Queue[CaptchaPayload | None] = Queue()
         self._captcha_response_queue: Queue[CaptchaResponse] = Queue()
-        self.cr_list: List[CaptchaResponse] = []
+        self.cr_list: list[CaptchaResponse] = []
 
         self.page.on("response", self._task_handler)
 
@@ -901,6 +940,10 @@ class AgentV:
             await self.page.wait_for_timeout(2000)
             await self.robotic_arm.refresh_challenge()
             return await self._solve_captcha()
+        except (BoundsValidationError, ChallengeViewportUnavailable):
+            # Defensive trust-boundary failures abort rather than entering the
+            # generic refresh-and-retry path.
+            raise
         except Exception as err:
             # This is an execution error inside the challenge,
             # hcaptcha challenge does not automatically refresh

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union, TypedDict, Tuple, List
+from typing import Any, TypedDict
 
 import cv2
 import matplotlib.pyplot as plt
@@ -13,9 +13,33 @@ class FloatRect(TypedDict):
     height: float
 
 
+def canvas_to_rgb(canvas: Any) -> np.ndarray:
+    """Copy a canvas buffer into a logical-pixel RGB image.
+
+    Interactive HiDPI backends expose a physical-pixel RGBA buffer while
+    ``get_width_height()`` reports logical pixels. Read the buffer using its
+    physical dimensions, then downsample only when the device pixel ratio is
+    not 1:1. This leaves Agg output byte-for-byte unchanged.
+    """
+    logical_width, logical_height = canvas.get_width_height()
+    physical_width, physical_height = canvas.get_width_height(physical=True)
+    rgba = np.frombuffer(canvas.buffer_rgba(), dtype=np.uint8).reshape(
+        physical_height, physical_width, 4
+    )
+
+    if (physical_width, physical_height) != (logical_width, logical_height):
+        rgba = cv2.resize(
+            rgba,
+            (logical_width, logical_height),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    return cv2.cvtColor(rgba, cv2.COLOR_RGBA2RGB)
+
+
 def _create_adaptive_contrast_grid(
     image: np.ndarray,
-    bbox: Union[FloatRect, Tuple[float, float, float, float], List[float]],
+    bbox: FloatRect | tuple[float, float, float, float] | list[float],
     *,
     x_line_space_num: int = 11,
     y_line_space_num: int = 20,
@@ -106,21 +130,16 @@ def _create_adaptive_contrast_grid(
     plt.tight_layout()
 
     fig.canvas.draw()
-    # Get the RGBA buffer from the figure
-    buf = fig.canvas.buffer_rgba()  # type: ignore[attr-defined]
-    img_with_grid = np.frombuffer(buf, dtype=np.uint8)
-    img_with_grid = img_with_grid.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    img_with_grid = canvas_to_rgb(fig.canvas)
 
     plt.close(fig)
-
-    img_with_grid = cv2.cvtColor(img_with_grid, cv2.COLOR_RGBA2RGB)
 
     return img_with_grid
 
 
 def create_coordinate_grid(
-    image: Union[str, np.ndarray, Path],
-    bbox: Union[FloatRect, Tuple[float, float, float, float], List[float]],
+    image: str | np.ndarray | Path,
+    bbox: FloatRect | tuple[float, float, float, float] | list[float],
     *,
     x_line_space_num: int = 11,
     y_line_space_num: int = 20,
@@ -215,17 +234,11 @@ def create_coordinate_grid(
     # Tight layout
     plt.tight_layout()
 
-    # Convert matplotlib figure to numpy array
+    # Convert matplotlib figure to a logical-pixel numpy array.
     fig.canvas.draw()
-    # Get the RGBA buffer from the figure
-    buf = fig.canvas.buffer_rgba()  # type: ignore[attr-defined]
-    img_with_grid = np.frombuffer(buf, dtype=np.uint8)
-    img_with_grid = img_with_grid.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    img_with_grid = canvas_to_rgb(fig.canvas)
 
     # Close the figure to free memory
     plt.close(fig)
-
-    # Convert RGBA to RGB
-    img_with_grid = cv2.cvtColor(img_with_grid, cv2.COLOR_RGBA2RGB)
 
     return img_with_grid

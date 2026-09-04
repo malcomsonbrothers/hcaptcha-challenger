@@ -6,8 +6,8 @@ class ArmorException(Exception):
 
     def __init__(
         self,
-        msg: typing.Optional[str] = None,
-        stacktrace: typing.Optional[typing.Sequence[str]] = None,
+        msg: str | None = None,
+        stacktrace: typing.Sequence[str] | None = None,
     ):
         self.msg = msg
         self.stacktrace = stacktrace
@@ -27,6 +27,10 @@ class ChallengeException(ArmorException):
 
 class ChallengePassed(ChallengeException):
     """Challenge not popping up"""
+
+
+class ChallengeViewportUnavailable(ChallengeException):
+    """The live challenge viewport is unavailable or has detached."""
 
 
 class LoadImageTimeout(ChallengeException):

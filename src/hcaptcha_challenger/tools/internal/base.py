@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Reasoner - Abstract base class for all reasoning tools.
 
@@ -16,7 +15,7 @@ import json
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Generic, TypeVar, Union
+from typing import Generic, TypeVar
 
 from loguru import logger
 from pydantic import BaseModel
@@ -25,7 +24,7 @@ from .providers.gemini import GeminiProvider
 from .providers.protocol import ChatProvider
 
 ModelT = TypeVar("ModelT", bound=str)
-ResponseT = TypeVar("ResponseT", bound=Union[BaseModel, Enum])
+ResponseT = TypeVar("ResponseT", bound=BaseModel | Enum)
 
 
 class Reasoner(ABC, Generic[ModelT, ResponseT]):
@@ -63,7 +62,9 @@ class Reasoner(ABC, Generic[ModelT, ResponseT]):
         """
         self._api_key = gemini_api_key
         self._model = model
-        self._provider: ChatProvider = provider or self._create_default_provider()
+        self._provider: ChatProvider = (
+            provider if provider is not None else self._create_default_provider()
+        )
         self._response = None
 
     def _create_default_provider(self) -> GeminiProvider:
@@ -104,5 +105,5 @@ class Reasoner(ABC, Generic[ModelT, ResponseT]):
                     ),
                     encoding="utf-8",
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"Failed to cache response: {e}")
